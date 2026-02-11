@@ -1,9 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>THEOPHILEMAKER E-Learning</title>
+<title>THEOPHILEMAKER E-LEARNING</title>
 <style>
 :root{
   --bg:#0f1724;
@@ -162,7 +163,7 @@ nav{display:flex;gap:8px;flex-wrap:wrap}
   </div>
 </section>
 
-<!-- Session Modal -->
+<!-- Session Modal (with file & video upload) -->
 <div id="sessionModal" class="modal">
   <div class="dialog">
     <h3>New Session</h3>
@@ -171,6 +172,10 @@ nav{display:flex;gap:8px;flex-wrap:wrap}
     <select id="sessCourseType">
       <option value="">--Select Course Type--</option>
     </select><br><br>
+    <label class="small">Upload File (PDF, DOC, etc.)</label><br>
+    <input type="file" id="sessFile" accept=".pdf,.doc,.docx,.txt"><br><br>
+    <label class="small">Upload Video</label><br>
+    <input type="file" id="sessVideo" accept="video/*"><br><br>
     <button class="btn primary" id="saveSessionBtn">Save</button>
     <button class="btn" id="cancelSessionBtn">Cancel</button>
   </div>
@@ -179,6 +184,30 @@ nav{display:flex;gap:8px;flex-wrap:wrap}
 <div class="footer">
 Built for THEOPHILEMAKER • theophilen298@gmail.com
 </div>
+
+<!-- FIREBASE -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
+import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyC4C2uWND_pfmPmz5Yr5SZ2hGNTH_MahXs",
+  authDomain: "theophilemaker.firebaseapp.com",
+  projectId: "theophilemaker",
+  storageBucket: "theophilemaker.firebasestorage.app",
+  messagingSenderId: "877489083781",
+  appId: "1:877489083781:web:8d2baa4d9a15c23b33a0ec"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// make available to old script
+window.f_db = db;
+window.f_collection = collection;
+window.f_addDoc = addDoc;
+window.f_serverTimestamp = serverTimestamp;
+</script>
 
 <script>
 // ================= DATA =================
@@ -194,6 +223,9 @@ let sessions=JSON.parse(localStorage.getItem(SESSIONS_KEY)||'[]');
 // ================= SESSIONS =================
 const sessionsList = $('#sessionsList');
 const sessionModal = $('#sessionModal');
+const fileInput = document.getElementById('sessFile');
+const videoInput = document.getElementById('sessVideo');
+
 function saveData(){localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions))}
 function uid(){return 's_'+Math.random().toString(36).slice(2,9)}
 
@@ -204,7 +236,7 @@ function renderSessions(filter=''){
   if(out.length===0){sessionsList.innerHTML='<div class="small">No sessions found.</div>';return;}
   out.forEach(s=>{
     const d=document.createElement('div');d.className='card';
-    d.innerHTML=`<h3>${s.title}</h3><div class="small">${s.desc}</div>${isAdmin?`<button class="btn" onclick="del('${s.id}')">Delete</button>`:''}`;
+    d.innerHTML=`<h3>${s.title}</h3><div class="small">${s.desc}</div>${s.file?`<a class="link-btn" href="${s.file}" download>Download File</a>`:''}${s.video?`<video src="${s.video}" controls style="width:100%;margin-top:6px"></video>`:''}${isAdmin?`<button class="btn" onclick="del('${s.id}')">Delete</button>`:''}`;
     sessionsList.appendChild(d);
   });
 }
@@ -248,6 +280,7 @@ $('#adminBtn').addEventListener('click',()=>{
   } else alert('Wrong password');
 });
 
+// Logo
 function loadLogo(){
   const src=localStorage.getItem('tm_logo');
   if(src){$('#logoImg').src=src;$('#logoImg').style.display='block';$('#logoText').style.display='none';}
@@ -314,32 +347,66 @@ function populateCourseTypes() {
   }
 }
 
-// Save session under course type
-$('#saveSessionBtn').addEventListener('click',()=>{
+/// ================= SAVE SESSION TO FIREBASE =================
+$('#saveSessionBtn').addEventListener('click', async () => {
+  if(!isAdmin){ alert('Admin only'); return; }
+
   const t = $('#sessTitle').value.trim();
   const d = $('#sessDesc').value.trim();
   const cType = sessCourseType.value;
-  if(!t){alert('Title required');return;}
-  if(!cType){alert('Select a course type');return;}
 
-  const session = {id: uid(), title: t, desc: d, image:'', video:'', file:''};
+  if(!t){ alert('Title required'); return; }
+  if(!cType){ alert('Select a course type'); return; }
 
-  // Add to courses
-  if(!courses[cType]) courses[cType] = [];
-  courses[cType].push(session);
-  saveCourses();
+  try{
+    // Create session object
+    const session = {
+      title: t,
+      desc: d,
+      course: cType,
+      file: "",    // will be file URL if you upload to Storage
+      video: "",   // will be video URL if you upload to Storage
+      created: f_serverTimestamp()
+    };
 
-  // Also add to general sessions list for quick search
-  sessions.push({id:session.id, title:t, desc:d, course:cType});
-  saveData();
+    // Save to Firestore
+    await f_addDoc(f_collection(f_db, "sessions"), session);
 
-  renderSessions('');
-  renderCourses();
-  sessionModal.classList.remove('show');
+    // Optionally: add to local arrays if you still want search/render locally
+    if(!courses[cType]) courses[cType] = [];
+    courses[cType].push({...session, id: uid()});
+    saveCourses();
+
+    sessions.push({...session, id: uid()});
+    saveData();
+
+    // Update UI
+    renderSessions('');
+    renderCourses();
+    sessionModal.classList.remove('show');
+
+    // Reset modal
+    $('#sessTitle').value='';
+    $('#sessDesc').value='';
+    sessCourseType.value='';
+    fileInput.value='';
+    videoInput.value='';
+
+    alert("Session saved to Firebase!");
+  }
+  catch(e){
+    console.error(e);
+    alert("Error saving session: " + e.message);
+  }
 });
 
-// Delete session
-function del(id){sessions=sessions.filter(x=>x.id!==id);saveData();renderSessions('');}
+// Delete session locally (optional)
+function del(id){
+  sessions = sessions.filter(x => x.id !== id);
+  saveData();
+  renderSessions('');
+}
+
 renderCourses();
 </script>
 
